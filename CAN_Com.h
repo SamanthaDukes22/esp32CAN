@@ -10,7 +10,9 @@ void setupCAN();
 void transmitCANCommands();
 
 // Receive incoming CAN frames from the Teensys
+
 void receiveCANTelemetry();	
+
 
 // Identify the sending Teensy and interpret its CAN data
 bool processCANMessage();	

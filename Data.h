@@ -35,7 +35,7 @@ extern char receivedCommandBuffer[128];
 extern const bool ACTIVE_MOTORS[4];
 
 // CAN configuration
-const uint32_t CAN_BAUD_RATE = 500000; // 5 kbps same asteensys
+//const uint32_t CAN_BAUD_RATE = 500000; // 500 kbps same asteensys
 
 
 struct MotorCommands {

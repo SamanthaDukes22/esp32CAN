@@ -12,8 +12,8 @@ IMUTelemetry imuTelemetry = {};
 // Which motors are active for test
 const bool ACTIVE_MOTORS[4] = {
     true,   // Motor 1
-    false,  // Motor 2
-    false,  // Motor 3
+    true,  // Motor 2
+    true,  // Motor 3
     false   // Motor 4
 };
 

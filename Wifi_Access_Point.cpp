@@ -5,10 +5,10 @@
 
 #include "Wifi_Access_Point.h"
 
-// Implementation of funcitons for wifi access point between esp32 and simulink
+// Implementation of functions for wifi access point between esp32 and simulink
 
 // WiFi configuration
-const char* ssid = "Hampter"; // Wifi name
+const char* ssid = "Hampter";       // Wifi name
 const char* password = "Whirligig"; // Wifi Password
 
 // TCP server
@@ -28,23 +28,17 @@ void setupWifi() {
     Serial.println();
     Serial.println("Configuring access point...");
 
-    // Create WiFi access point
     if (!WiFi.softAP(ssid, password)) {
-
         Serial.println("WiFi failed!");
-
         return;
     }
 
-    // Print ESP32 IP address
     Serial.print("ESP32 IP address: ");
     Serial.println(WiFi.softAPIP());
 
-    // Start TCP server
     server.begin();
 
     Serial.println("TCP server started on port 80");
-
 }
 
 
@@ -62,6 +56,7 @@ bool receiveWifiCommand(char* buffer, size_t bufferSize) {
         client = server.available();
 
         if (client) {
+            client.setNoDelay(true);   // send small telemetry packets immediately (disable Nagle)
             Serial.println("Simulink connected!");
             rxIndex = 0;
         }
@@ -82,54 +77,49 @@ bool receiveWifiCommand(char* buffer, size_t bufferSize) {
                 rxIndex--;
             }
 
-            // Check output buffer size
+            // Output buffer needs room for the terminating null
             if (rxIndex >= bufferSize) {
-
                 rxIndex = 0;
                 return false;
-
             }
 
-            // Copy completed command
             memcpy(buffer, rxBuffer, rxIndex);
-
             buffer[rxIndex] = '\0';
-
             rxIndex = 0;
 
             return true;
-
         }
 
         // Store received character
         if (rxIndex < sizeof(rxBuffer) - 1) {
-
             rxBuffer[rxIndex++] = c;
-
         }
         else {
-
             // Discard oversized command
             rxIndex = 0;
-
         }
-
     }
 
     return false;
-
 }
 
 
-// Send telemetry to Simulink
+// Send telemetry to Simulink. The packet already ends in '\n', so write it as-is in one call
+// (println would add an extra "\r\n" and can split into two TCP writes).
 void sendWifiTelemetry(const char* data) {
 
     if (client && client.connected()) {
-
-        client.println(data);
-
+        client.write((const uint8_t*)data, strlen(data));
     }
+}
 
+
+// Send a raw binary packet to Simulink (binary data can contain zero bytes, so no strlen)
+void sendWifiBytes(const uint8_t* data, size_t length) {
+
+    if (client && client.connected()) {
+        client.write(data, length);
+    }
 }
 
 
@@ -137,6 +127,5 @@ void sendWifiTelemetry(const char* data) {
 bool checkWiFiConnection() {
 
     return WiFi.softAPgetStationNum() > 0;
-
 }
 

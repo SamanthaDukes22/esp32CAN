@@ -4,10 +4,12 @@
 #include "Data.h"
 #include "CAN_Com.h"
 
-// Watchdog timeout limits
-const uint32_t COMMAND_TIMEOUT_MS = 10000; // Receiving current cmds from Simulink 
-const uint32_t CAN_TIMEOUT_MS = 10000;     // Receiving telemetry cmds from Teensys
-const uint32_t STARTUP_GRACE_PERIOD_MS = 1000;
+// Watchdog timeout limits.
+// NOTE: the Teensys must be sending telemetry at 100 Hz before enabling these short timeouts.
+// While testing at 1 Hz, raise CAN_TIMEOUT_MS to 2000 or more.
+const uint32_t COMMAND_TIMEOUT_MS = 500;       // Receiving current cmds from Simulink
+const uint32_t CAN_TIMEOUT_MS = 500;           // Receiving telemetry from Teensys
+const uint32_t STARTUP_GRACE_PERIOD_MS = 5000; // Time for Simulink to connect and Teensys to start
 
 // Command communication tracking of simulink command times
 uint32_t lastCommandTime = 0;
@@ -24,7 +26,8 @@ uint32_t startupTime = 0;
 bool safeStateActive = false;
 
 
-// Initialize safety flags and watchdog timers
+// Initialize safety flags and watchdog timers.
+// Call at the END of setup() so the grace period starts after WiFi/IMU init (which takes over a second).
 void initializeSafety() {
 
     startupTime = millis();
@@ -38,7 +41,6 @@ void initializeSafety() {
         lastCANTelemetryTime[i] = startupTime;
         canTelemetryReceived[i] = false;
     }
-
 }
 
 
@@ -47,7 +49,6 @@ void recordValidCommand() {
 
     lastCommandTime = millis();
     commandReceived = true;
-
 }
 
 
@@ -60,7 +61,6 @@ void recordCANTelemetry(uint8_t motorIndex) {
 
     lastCANTelemetryTime[motorIndex] = millis();
     canTelemetryReceived[motorIndex] = true;
-
 }
 
 
@@ -75,16 +75,20 @@ bool checkCommandTimeout() {
     }
 
     return (currentTime - lastCommandTime) > COMMAND_TIMEOUT_MS;
-
 }
 
 
-// Detect when a Teensy stops sending telemetry
+// Detect when an ACTIVE Teensy stops sending telemetry
 bool checkCANTimeout() {
 
     uint32_t currentTime = millis();
 
     for (int i = 0; i < 4; i++) {
+
+        // Inactive motors never send telemetry, so they must not trigger a fault
+        if (!ACTIVE_MOTORS[i]) {
+            continue;
+        }
 
         // Allow startup grace period before first telemetry
         if (!canTelemetryReceived[i]) {
@@ -97,64 +101,56 @@ bool checkCANTimeout() {
         else if ((currentTime - lastCANTelemetryTime[i]) > CAN_TIMEOUT_MS) {
             return true;
         }
-
     }
 
     return false;
-
 }
 
 
-// Trigger motors input to zero when a fault occurs
+// Force all motor current commands to zero.
+// The main loop already transmits motorCommands at 100 Hz, so no extra transmit is needed here.
 void enterSafeState() {
 
-    if (safeStateActive) {
-        return;
-    }
-
-    Serial.println("SAFETY FAULT: Entering safe operating state!");
-
-    // Set all four motor current commands to zero
     for (int i = 0; i < 4; i++) {
         motorCommands.current_cmd[i] = 0.0f;
     }
 
-    // Transmit zero-current commands over CAN
-    transmitCANCommands();
-
-    safeStateActive = true;
-
+    if (!safeStateActive) {
+        Serial.println("SAFETY FAULT: commanding all motors to 0 A");
+        safeStateActive = true;
+    }
 }
 
 
-// Periodically check system communication and update status
-void checkWatchdogs() {
-
-    if (checkCommandTimeout()) {
-        Serial.println("WARNING: Simulink command timeout!");
-        enterSafeState();
-        Serial.println("WARNING RESPONSE: Attempting to commnad motors to 0 A");
-    }
-
-    if (checkCANTimeout()) {
-        Serial.println("WARNING: CAN telemetry timeout!");
-        enterSafeState();
-        Serial.println("WARNING RESPONSE: Attempting to commnad motors to 0 A");
-    }
-
-}
-
-
-// Clear faults when communication has recovered, could implement into Simulink 
+// Clear the fault state once communication has recovered
 void resetSafetyFlags() {
 
-    // Only allow reset when both communication paths are healthy
-    if (!checkCommandTimeout() && !checkCANTimeout()) {
-
-        safeStateActive = false;
-
+    if (safeStateActive) {
         Serial.println("Safety flags reset.");
-
     }
 
+    safeStateActive = false;
+}
+
+
+// Check system communication. Call every loop pass, AFTER new commands are processed
+// and BEFORE transmitCANCommands(), so a fault always overrides the command being sent.
+void checkWatchdogs() {
+
+    const bool commandFault = checkCommandTimeout();
+    const bool canFault = checkCANTimeout();
+
+    if (commandFault || canFault) {
+
+        // Re-zero on every call while the fault persists, so a late Simulink command
+        // can't push current to a Teensy that has gone silent.
+        if (!safeStateActive) {
+            if (commandFault) Serial.println("WARNING: Simulink command timeout!");
+            if (canFault)     Serial.println("WARNING: CAN telemetry timeout!");
+        }
+        enterSafeState();
+    }
+    else {
+        resetSafetyFlags();
+    }
 }
